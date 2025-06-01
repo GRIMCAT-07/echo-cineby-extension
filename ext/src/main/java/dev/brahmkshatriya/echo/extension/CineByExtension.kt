@@ -160,7 +160,7 @@ class CineByExtension : ExtensionClient, HomeFeedClient, AlbumClient, TrackClien
         val subs = async { runCatching { getSubs(track) }.getOrNull().orEmpty() }
         val streamables = webViewClient.await(
             false, "Getting Servers", ServerWebViewRequest(track.id.toRequest(), track.album!!.id)
-        ).getOrThrow()!!.toData<List<Streamable>>()
+        ).getOrThrow()!!.toData<List<Streamable>>().sortedBy { it.title != "Neon" }
         track.copy(streamables = streamables + subs.await())
     }
 
@@ -183,7 +183,7 @@ class CineByExtension : ExtensionClient, HomeFeedClient, AlbumClient, TrackClien
                     val link = it.url.jsonPrimitive.contentOrNull ?: return@mapNotNull null
                     Streamable.Source.Http(
                         title = it.quality,
-                        request = link.toRequest(),
+                        request = link.toRequest(mapOf("referer" to "https://www.cineby.app")),
                         quality = quality ?: 0,
                         type = if (link.endsWith(".m3u8")) Streamable.SourceType.HLS
                         else Streamable.SourceType.Progressive
