@@ -10,6 +10,7 @@ import dev.brahmkshatriya.echo.common.helpers.PagedData
 import dev.brahmkshatriya.echo.common.helpers.WebViewClient
 import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem.Companion.toMediaItem
+import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeed
 import dev.brahmkshatriya.echo.common.models.ImageHolder
 import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Request.Companion.toRequest
@@ -19,6 +20,7 @@ import dev.brahmkshatriya.echo.common.models.Tab
 import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.common.providers.WebViewClientProvider
 import dev.brahmkshatriya.echo.common.settings.Setting
+import dev.brahmkshatriya.echo.common.settings.SettingTextInput
 import dev.brahmkshatriya.echo.common.settings.Settings
 import dev.brahmkshatriya.echo.extension.cineby.Convertor.toAlbum
 import dev.brahmkshatriya.echo.extension.cineby.Convertor.toData
@@ -46,11 +48,21 @@ import java.util.WeakHashMap
 class CineByExtension : ExtensionClient, HomeFeedClient, AlbumClient, TrackClient,
     WebViewClientProvider, SearchFeedClient {
 
-    override val settingItems: List<Setting> = emptyList()
+    override val settingItems: List<Setting>
+        get() = listOf(
+            SettingTextInput(
+                "First Server",
+                "first_server",
+                "The first server to use when playing a media.",
+                firstServer
+            )
+        )
     private lateinit var setting: Settings
     override fun setSettings(settings: Settings) {
         setting = settings
     }
+
+    private val firstServer get() = setting.getString("first_server") ?: "Neon"
 
     private lateinit var webViewClient: WebViewClient
     override fun setWebViewClient(webViewClient: WebViewClient) {
@@ -92,7 +104,7 @@ class CineByExtension : ExtensionClient, HomeFeedClient, AlbumClient, TrackClien
             page.defaultSections.map { it.toShelf(home) },
             page.genreSections.map { it.toShelf(home) },
         ).flatten()
-    }
+    }.toFeed()
 
     private val shelvesMap = WeakHashMap<String, List<Shelf>>()
 
@@ -158,9 +170,10 @@ class CineByExtension : ExtensionClient, HomeFeedClient, AlbumClient, TrackClien
     override suspend fun loadTrack(track: Track) = coroutineScope {
         if (track.streamables.isNotEmpty()) return@coroutineScope track
         val subs = async { runCatching { getSubs(track) }.getOrNull().orEmpty() }
+        val server = firstServer
         val streamables = webViewClient.await(
             false, "Getting Servers", ServerWebViewRequest(track.id.toRequest(), track.album!!.id)
-        ).getOrThrow()!!.toData<List<Streamable>>().sortedBy { it.title != "Neon" }
+        ).getOrThrow()!!.toData<List<Streamable>>().sortedBy { it.title != server }
         track.copy(streamables = streamables + subs.await())
     }
 
@@ -220,12 +233,12 @@ class CineByExtension : ExtensionClient, HomeFeedClient, AlbumClient, TrackClien
         return getHistory().map { QuickSearchItem.Query(it, true) }
     }
 
-    override fun searchFeed(query: String, tab: Tab?): PagedData<Shelf> {
-        return if (query.isBlank()) PagedData.Single {
+    override fun searchFeed(query: String, tab: Tab?) = PagedData.Single<Shelf> {
+        if (query.isBlank()) {
             val id = getBaseId()
             val resp = call("$BASE_URL/_next/data/$id/$LANG/search.json").toData<Search>()
             resp.pageProps.trending.map { it.toAlbum().toMediaItem().toShelf() }
-        } else PagedData.Single {
+        } else {
             saveInHistory(query)
             val type = tab?.id ?: "multi"
             val url =
@@ -233,7 +246,7 @@ class CineByExtension : ExtensionClient, HomeFeedClient, AlbumClient, TrackClien
             val res = call(url)
             res.toData<Media.Search>().results.map { it.toAlbum(true).toMediaItem().toShelf() }
         }
-    }
+    }.toFeed()
 
     override suspend fun searchTabs(query: String) = if (query.isBlank()) listOf() else listOf(
         Tab("multi", "All"), Tab("movie", "Movies"), Tab("tv", "TV Shows")
